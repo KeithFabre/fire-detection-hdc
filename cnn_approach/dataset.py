@@ -7,6 +7,10 @@ IMG_WIDTH = 256
 IMG_HEIGHT = 256
 BATCH_SIZE = 32
 
+
+
+
+
 def get_dataloaders(data_dir, batch_size=BATCH_SIZE, val_split=0.2, num_workers=4):
     """
     Creates training and validation dataloaders from an image folder.
@@ -43,6 +47,7 @@ def get_dataloaders(data_dir, batch_size=BATCH_SIZE, val_split=0.2, num_workers=
     generator = torch.Generator().manual_seed(42)
     train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size], generator=generator)
 
+
     print(f"Total images: {total_size}")
     print(f"Training images: {len(train_dataset)}")
     print(f"Validation images: {len(val_dataset)}")
@@ -65,10 +70,14 @@ def get_dataloaders(data_dir, batch_size=BATCH_SIZE, val_split=0.2, num_workers=
 
     return train_loader, val_loader, class_names
 
+
+
+
+
 if __name__ == '__main__':
     # Example of how to use this script
     # This assumes your data is in `../frames/Training` relative to this script
-    data_directory = '../frames/Training'
+    data_directory = '../Training'
     train_loader, val_loader, class_names = get_dataloaders(data_directory)
 
     # Fetch and print details from one batch to verify
