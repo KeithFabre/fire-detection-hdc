@@ -20,7 +20,8 @@ print("Using {} device".format(device))
 #DIMENSIONS = 10000
 DIMENSIONS = 1000
 IMG_SIZE = 256
-NUM_LEVELS = 1000
+# qt de HV pra representar um valor numerico
+NUM_LEVELS = 100
 BATCH_SIZE = 1  # for GPUs with enough memory we can process multiple images at ones
 
 
@@ -28,7 +29,7 @@ BATCH_SIZE = 1  # for GPUs with enough memory we can process multiple images at 
 IMG_WIDTH = 256
 IMG_HEIGHT = 256
 IMG_BATCH_SIZE = 32
-NUM_WORKERS = 4
+NUM_WORKERS = 1
 
 # training directory
 training_directory = './Training'
@@ -39,9 +40,10 @@ test_directory = './Test'
 #transform = torchvision.transforms.ToTensor()
 
 transform = transforms.Compose([
-        transforms.Resize((IMG_HEIGHT, IMG_WIDTH)),
+        transforms.Resize(IMG_HEIGHT),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        transforms.Grayscale(num_output_channels=1)
     ])
 
 training_ds = datasets.ImageFolder(root=training_directory, transform=transform)
@@ -59,18 +61,18 @@ generator = torch.Generator().manual_seed(42)
 
 train_ld = DataLoader(
         training_ds,
-        batch_size=IMG_BATCH_SIZE,
-        shuffle=True,
-        num_workers=NUM_WORKERS,
-        pin_memory=True
+        batch_size=IMG_BATCH_SIZE
+        #shuffle=True
+        #num_workers=NUM_WORKERS,
+        #pin_memory=True
     )
 
 test_ld = DataLoader(
         test_ds,
-        batch_size=IMG_BATCH_SIZE,
-        shuffle=True,
-        num_workers=NUM_WORKERS,
-        pin_memory=True
+        batch_size=IMG_BATCH_SIZE
+        #shuffle=True,
+        #num_workers=NUM_WORKERS,
+        #pin_memory=True
     )
 
 
@@ -85,9 +87,21 @@ class Encoder(nn.Module):
         self.value = embeddings.Level(levels, out_features)
 
     def forward(self, x):
+
         x = self.flatten(x)
-        sample_hv = torchhd.bind(self.position.weight, self.value(x))
-        sample_hv = torchhd.multiset(sample_hv)
+        '''
+            print(x.shape, self.position.weight.shape) gives:
+            torch.Size([32, 196608]) torch.Size([65536, 1000])
+            and it kills the process
+        '''
+
+        #torchhd.bind(self.position.weight, self.value(x[0]))
+        #print('fiz um bind')    
+        #exit()
+
+        sample_hv = torchhd.bind(self.position.weight, self.value(x)) # binds position and value
+        sample_hv = torchhd.multiset(sample_hv) 
+
         return torchhd.hard_quantize(sample_hv)
 
 
@@ -98,15 +112,27 @@ num_classes = len(training_ds.classes)
 model = Centroid(DIMENSIONS, num_classes)
 model = model.to(device)
 
+print('-'*50)
+print('Starting Training')
+print('-'*50)
+
+
 with torch.no_grad():
+
     for samples, labels in tqdm(train_ld, desc="Training"):
         samples = samples.to(device)
         labels = labels.to(device)
 
         samples_hv = encode(samples)
+        #print('Encode Done')
         model.add(samples_hv, labels)
+        #exit()
 
 accuracy = torchmetrics.Accuracy("multiclass", num_classes=num_classes)
+print('-'*50)
+print('Starting Test')
+print('-'*50)
+
 
 with torch.no_grad():
     model.normalize()
