@@ -5,6 +5,8 @@ Training/
 # Ignore virtual environment
 tccenv/
 
+# g
+
 # Python ignores
 __pycache__/
 *.pyc
