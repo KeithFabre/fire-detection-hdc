@@ -1,0 +1,7 @@
+numpy
+Pillow
+tqdm
+torch
+torch-hd
+matplotlib
+pyhdc

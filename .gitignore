@@ -1,0 +1,27 @@
+# Ignore datasets
+Test/
+Training/
+
+# Ignore virtual environment
+tccenv/
+
+# Python ignores
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pyc
+.pytest_cache/
+
+# IDE files
+.vscode/
+.idea/
+
+# Logs and outputs
+*.log
+*.out
+*.csv
+*.json
+*.h5
+*.pkl
+*.model
