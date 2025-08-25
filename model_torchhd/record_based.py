@@ -1,3 +1,5 @@
+# record-based encoding
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -32,9 +34,9 @@ IMG_BATCH_SIZE = 32
 NUM_WORKERS = 1
 
 # training directory
-training_directory = './Training'
+training_directory = '../data/Training'
 # test directory
-test_directory = './Test'
+test_directory = '../data/Test'
 
 
 #transform = torchvision.transforms.ToTensor()

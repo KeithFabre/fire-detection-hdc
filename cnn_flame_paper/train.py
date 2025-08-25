@@ -10,7 +10,7 @@ from dataset import get_dataloaders
 from model import FireDetectionModel
 
 # --- Configuration ---
-DATA_DIR = '../Training'
+DATA_DIR = '../data/Training'
 MODEL_SAVE_DIR = 'checkpoints'
 MODEL_NAME = 'fire_detection_best.pth'
 NUM_EPOCHS = 40  # Keras model was trained for 40 epochs

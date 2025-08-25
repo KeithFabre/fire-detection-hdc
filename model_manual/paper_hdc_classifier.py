@@ -1,3 +1,5 @@
+# CONFERIR
+
 ''' From paper: 
         Classification and Recall With Binary
         Hyperdimensional Computing: Tradeoffs in

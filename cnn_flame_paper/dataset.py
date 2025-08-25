@@ -77,7 +77,7 @@ def get_dataloaders(data_dir, batch_size=BATCH_SIZE, val_split=0.2, num_workers=
 if __name__ == '__main__':
     # Example of how to use this script
     # This assumes your data is in `../frames/Training` relative to this script
-    data_directory = '../Training'
+    data_directory = '../data/Training'
     train_loader, val_loader, class_names = get_dataloaders(data_directory)
 
     # Fetch and print details from one batch to verify
