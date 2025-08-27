@@ -15,6 +15,7 @@ import torchhd
 from torchhd.models import Centroid
 from torchhd import embeddings
 
+torch.cuda.empty_cache()
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Using {} device".format(device))
@@ -30,7 +31,7 @@ BATCH_SIZE = 1  # for GPUs with enough memory we can process multiple images at 
 # Image dimensions and batch size
 IMG_WIDTH = 256
 IMG_HEIGHT = 256
-IMG_BATCH_SIZE = 32
+IMG_BATCH_SIZE = 8
 NUM_WORKERS = 1
 
 # training directory
@@ -98,7 +99,7 @@ class Encoder(nn.Module):
         '''
 
         #torchhd.bind(self.position.weight, self.value(x[0]))
-        #print('fiz um bind')    
+        print(x.shape, self.position.weight.shape)
         #exit()
 
         sample_hv = torchhd.bind(self.position.weight, self.value(x)) # binds position and value

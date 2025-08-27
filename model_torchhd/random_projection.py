@@ -15,6 +15,7 @@ import torchhd
 from torchhd.models import Centroid
 from torchhd import embeddings
 
+torch.cuda.empty_cache()
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Using {} device".format(device))
