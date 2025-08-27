@@ -1,4 +1,4 @@
-# Modified for VGG16 feature extraction + Random Projection HDC classification
+# Modified for VGG16 feature extraction + Random Projection HDC classification with memory optimization
 
 import torch
 import torch.nn as nn
@@ -9,7 +9,7 @@ from tqdm import tqdm
 import time
 import torchvision.models as models
 from torchvision import datasets, transforms
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader, random_split, Subset
 
 # Import for HDC
 import torchhd
@@ -27,15 +27,6 @@ DIMENSIONS = 1000  # Hypervector dimension
 def get_dataloaders(data_dir, batch_size=BATCH_SIZE, val_split=0.2, num_workers=4):
     """
     Creates training and validation dataloaders optimized for VGG16.
-    
-    Args:
-        data_dir (str): Path to the root data directory (e.g., '../Training').
-        batch_size (int): The number of samples per batch.
-        val_split (float): The proportion of the dataset to use for validation.
-        num_workers (int): Number of subprocesses to use for data loading.
-
-    Returns:
-        tuple: A tuple containing (train_loader, val_loader, class_names).
     """
     # VGG16 preprocessing: resize to 224x224 and normalize with ImageNet stats
     data_transforms = transforms.Compose([
@@ -48,7 +39,6 @@ def get_dataloaders(data_dir, batch_size=BATCH_SIZE, val_split=0.2, num_workers=
     full_dataset = datasets.ImageFolder(root=data_dir, transform=data_transforms)
     class_names = full_dataset.classes
     print(f"Classes found: {class_names}")
-    print(f"Class to index mapping: {full_dataset.class_to_idx}")
 
     # Split dataset into training and validation sets
     total_size = len(full_dataset)
@@ -64,20 +54,8 @@ def get_dataloaders(data_dir, batch_size=BATCH_SIZE, val_split=0.2, num_workers=
     print(f"Validation images: {len(val_dataset)}")
 
     # Create DataLoaders for training and validation
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=batch_size,
-        #shuffle=True,
-        #num_workers=num_workers,
-        #pin_memory=True
-    )
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=batch_size,
-        #shuffle=False,
-        #num_workers=num_workers,
-        #pin_memory=True
-    )
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
     return train_loader, val_loader, class_names
 
@@ -86,12 +64,15 @@ class RandomProjectionEncoder(nn.Module):
     Encoder for converting features to hypervectors using random projection.
     Based on the random_projection.py implementation.
     """
-    def __init__(self, out_features, size):
+    def __init__(self, out_features, size, device=None):
         super(RandomProjectionEncoder, self).__init__()
+        self.device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         # Nonlinear projection for feature encoding
-        self.nonlinear_projection = embeddings.Sinusoid(size, out_features)
+        self.nonlinear_projection = embeddings.Sinusoid(size, out_features, vsa="MAP")
+        self.nonlinear_projection = self.nonlinear_projection.to(self.device)
 
     def forward(self, x):
+        x = x.to(self.device)
         sample_hv = self.nonlinear_projection(x)
         return torchhd.hard_quantize(sample_hv)
 
@@ -109,7 +90,7 @@ def extract_features(model, x):
     return features
 
 # Configuration
-DATA_DIR = '../data/Training'
+DATA_DIR = '../Training'
 NUM_CLASSES = 2  # Binary classification for fire detection
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -123,81 +104,84 @@ print(f"Classes: {class_names}")
 vgg16 = models.vgg16(pretrained=True).to(device)
 vgg16.eval()  # Set to evaluation mode since we're only extracting features
 
-print("Extracting features from training set...")
-# Extract features from training set
-all_train_features = []
-all_train_labels = []
-
-for images, labels in tqdm(train_loader, desc="Training feature extraction"):
-    images = images.to(device)
-    features = extract_features(vgg16, images)
-    all_train_features.append(features.cpu())
-    all_train_labels.append(labels.cpu())
-
-X_train = torch.cat(all_train_features, dim=0)
-y_train = torch.cat(all_train_labels, dim=0)
-
-print("Extracting features from validation set...")
-# Extract features from validation set
-all_val_features = []
-all_val_labels = []
-
-for images, labels in tqdm(val_loader, desc="Validation feature extraction"):
-    images = images.to(device)
-    features = extract_features(vgg16, images)
-    all_val_features.append(features.cpu())
-    all_val_labels.append(labels.cpu())
-
-X_val = torch.cat(all_val_features, dim=0)
-y_val = torch.cat(all_val_labels, dim=0)
-
-print(f"Training features shape: {X_train.shape}")
-print(f"Training labels shape: {y_train.shape}")
-print(f"Validation features shape: {X_val.shape}")
-print(f"Validation labels shape: {y_val.shape}")
+# Get feature dimension by processing a small batch
+print("Getting feature dimension...")
+sample_batch, _ = next(iter(train_loader))
+sample_batch = sample_batch.to(device)
+sample_features = extract_features(vgg16, sample_batch)
+feature_dim = sample_features.shape[1]
+print(f"Feature dimension: {feature_dim}")
 
 # Create random projection encoder
-encode = RandomProjectionEncoder(DIMENSIONS, X_train.shape[1])
+encode = RandomProjectionEncoder(DIMENSIONS, feature_dim, device=device)
 encode = encode.to(device)
 
-# Encode training features
-print("Encoding training features with random projection...")
-X_train_encoded = encode(X_train.to(device))
-y_train = y_train.to(device)
-
-# Encode validation features
-print("Encoding validation features with random projection...")
-X_val_encoded = encode(X_val.to(device))
-y_val = y_val.to(device)
-
 # Create and train Centroid model
-print("Training Centroid model...")
 model = Centroid(DIMENSIONS, NUM_CLASSES)
 model.to(device)
 
-# Train the model by adding encoded samples
-for i in tqdm(range(len(X_train_encoded)), desc="Adding training samples"):
-    model.add(X_train_encoded[i].unsqueeze(0), y_train[i].unsqueeze(0))
+# Train the model by processing batches
+print("Training Centroid model with random projection...")
+for batch_idx, (images, labels) in enumerate(tqdm(train_loader, desc="Training")):
+    images = images.to(device)
+    labels = labels.to(device)
+    
+    # Extract features
+    with torch.no_grad():
+        features = extract_features(vgg16, images)
+    
+    # Encode features to hypervectors
+    encoded_features = encode(features)
+    
+    # Add to centroid model
+    for i in range(len(encoded_features)):
+        model.add(encoded_features[i].unsqueeze(0), labels[i].unsqueeze(0))
+    
+    # Clear memory periodically
+    if batch_idx % 10 == 0:
+        torch.cuda.empty_cache()
+
+model.normalize()
 
 # Validate the model
 print("Validating Centroid model...")
-model.normalize()
+correct = 0
+total = 0
+all_predictions = []
+all_labels = []
 
-predictions = []
-for i in tqdm(range(len(X_val_encoded)), desc="Predicting validation samples"):
-    output = model(X_val_encoded[i].unsqueeze(0), dot=True)
-    predictions.append(output.argmax(dim=1).item())
+with torch.no_grad():
+    for images, labels in tqdm(val_loader, desc="Validation"):
+        images = images.to(device)
+        labels = labels.to(device)
+        
+        # Extract features
+        features = extract_features(vgg16, images)
+        
+        # Encode features to hypervectors
+        encoded_features = encode(features)
+        
+        # Predict
+        outputs = model(encoded_features, dot=True)
+        predictions = outputs.argmax(dim=1)
+        
+        correct += (predictions == labels).sum().item()
+        total += labels.size(0)
+        
+        all_predictions.extend(predictions.cpu().numpy())
+        all_labels.extend(labels.cpu().numpy())
+        
+        # Clear memory
+        torch.cuda.empty_cache()
 
-predictions = torch.tensor(predictions, device=device)
-accuracy = (predictions == y_val).float().mean().item()
-
+accuracy = correct / total
 print(f"Validation Accuracy: {accuracy * 100:.2f}%")
 
-# Additional metrics can be added here for binary classification
+# Additional metrics
 from sklearn.metrics import classification_report, confusion_matrix
 
 print("\nClassification Report:")
-print(classification_report(y_val.cpu().numpy(), predictions.cpu().numpy(), target_names=class_names))
+print(classification_report(all_labels, all_predictions, target_names=class_names))
 
 print("\nConfusion Matrix:")
-print(confusion_matrix(y_val.cpu().numpy(), predictions.cpu().numpy()))
+print(confusion_matrix(all_labels, all_predictions))
