@@ -14,7 +14,7 @@ from model import get_vgg16_model
 DATA_DIR = '../Training'
 MODEL_SAVE_DIR = 'checkpoints'
 MODEL_NAME = 'vgg16_fire_detection_best.pth'
-NUM_EPOCHS = 20  # Fewer epochs for transfer learning
+NUM_EPOCHS = 3  # Fewer epochs for transfer learning
 LEARNING_RATE = 1e-4  # Lower learning rate for fine-tuning
 BATCH_SIZE = 16  # Smaller batch size for VGG16 (memory constraints)
 
