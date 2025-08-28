@@ -68,6 +68,34 @@ for classifier in classifiers:
         num_features, DIMENSIONS, num_classes, device=device, **params[classifier]
     )
 
-    model.fit(train_ld)
-    accuracy = model.accuracy(test_ld)
-    print(f"Testing accuracy of {(accuracy * 100):.3f}%")
+    # Custom training with progress bar
+    print("Training...")
+    for epoch in range(params[classifier]["epochs"]):
+        model.train()
+        progress_bar = tqdm(train_ld, desc=f"Epoch {epoch+1}/{params[classifier]['epochs']}")
+        for samples, labels in progress_bar:
+            samples = samples.to(device)
+            labels = labels.to(device)
+            model.encoder.train()
+            model.encoder(samples)  # This updates the model internally
+        progress_bar.close()
+
+    # Custom testing with progress bar
+    print("Testing...")
+    model.eval()
+    correct = 0
+    total = 0
+    progress_bar = tqdm(test_ld, desc="Testing")
+    with torch.no_grad():
+        for samples, labels in progress_bar:
+            samples = samples.to(device)
+            labels = labels.to(device)
+            outputs = model(samples)
+            _, predicted = torch.max(outputs.data, 1)
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
+            progress_bar.set_postfix(accuracy=f"{100 * correct / total:.2f}%")
+    progress_bar.close()
+
+    accuracy = 100 * correct / total
+    print(f"Testing accuracy of {accuracy:.3f}%")
