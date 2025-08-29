@@ -25,6 +25,42 @@ BATCH_SIZE = 32
 DIMENSIONS = 1000  # Hypervector dimension
 NUM_LEVELS = 100   # Number of levels for encoding
 
+def get_dataloaders(data_dir, batch_size=BATCH_SIZE, val_split=0.2, num_workers=4):
+    """
+    Creates training and validation dataloaders optimized for VGG16.
+    """
+    # VGG16 preprocessing
+    data_transforms = transforms.Compose([
+        transforms.Resize((IMG_HEIGHT, IMG_WIDTH)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    ])
+
+    # Load the entire dataset using ImageFolder
+    full_dataset = datasets.ImageFolder(root=data_dir, transform=data_transforms)
+    class_names = full_dataset.classes
+    print(f"Classes found: {class_names}")
+
+    # Split dataset into training and validation sets
+    total_size = len(full_dataset)
+    val_size = int(total_size * val_split)
+    train_size = total_size - val_size
+
+    generator = torch.Generator().manual_seed(42)
+    train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size], generator=generator)
+
+    print(f"Total images: {total_size}")
+    print(f"Training images: {len(train_dataset)}")
+    print(f"Validation images: {len(val_dataset)}")
+
+    # Create DataLoaders
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+
+    return train_loader, val_loader, class_names
+
+
+
 class RecordEncoder(nn.Module):
     """
     Encoder for converting features to hypervectors using random projection and scatter coding.
@@ -64,29 +100,14 @@ def extract_features(model, x):
     return features
 
 # Configuration
-TRAIN_DATA_DIR = '../Training'
-TEST_DATA_DIR = '../Test'
+DATA_DIR = '../Training'
 NUM_CLASSES = 2  # Binary classification for fire detection
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using {device} device")
 
-
 # Get data loaders
-# VGG16 preprocessing
-data_transforms = transforms.Compose([
-    transforms.Resize((IMG_HEIGHT, IMG_WIDTH)),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-])
-
-# Load the entire dataset using ImageFolder
-train_dataset = datasets.ImageFolder(root=TRAIN_DATA_DIR, transform=data_transforms)
-train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE)
-class_names = train_dataset.classes
-test_dataset = datasets.ImageFolder(root=TEST_DATA_DIR, transform=data_transforms)
-test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False)
-
+train_loader, val_loader, class_names = get_dataloaders(DATA_DIR, batch_size=BATCH_SIZE)
 print(f"Classes: {class_names}")
 
 # Load pre-trained VGG16
@@ -146,14 +167,14 @@ for batch_idx, (images, labels) in enumerate(tqdm(train_loader, desc="Training")
 model.normalize()
 
 # Validate the model
-print("Testing Centroid model...")
+print("Validating Centroid model...")
 correct = 0
 total = 0
 all_predictions = []
 all_labels = []
 
 with torch.no_grad():
-    for images, labels in tqdm(test_loader, desc="Test"):
+    for images, labels in tqdm(val_loader, desc="Validation"):
         images = images.to(device)
         labels = labels.to(device)
         

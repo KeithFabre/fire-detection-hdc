@@ -5,18 +5,24 @@ from torch.utils.data import DataLoader
 import os
 from tqdm import tqdm
 import time
+from torchvision import datasets, transforms
 
 # Import our custom modules
-from dataset import get_dataloaders
+#from dataset import get_dataloaders
 from model import get_vgg16_model
 
 # --- Configuration ---
 DATA_DIR = '../Training'
 MODEL_SAVE_DIR = 'checkpoints'
 MODEL_NAME = 'vgg16_fire_detection_best.pth'
-NUM_EPOCHS = 3  # Fewer epochs for transfer learning
+NUM_EPOCHS = 10  # Fewer epochs for transfer learning
 LEARNING_RATE = 1e-4  # Lower learning rate for fine-tuning
 BATCH_SIZE = 16  # Smaller batch size for VGG16 (memory constraints)
+
+# VGG16 expects 224x224 images
+IMG_WIDTH = 224
+IMG_HEIGHT = 224
+BATCH_SIZE = 32
 
 def train_one_epoch(model, dataloader, criterion, optimizer, device):
     """
@@ -96,9 +102,36 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    # Get DataLoaders
-    train_loader, val_loader, class_names = get_dataloaders(DATA_DIR, batch_size=BATCH_SIZE)
+    # ----------- GETS DATA --------------
+    # Configuration
+    TRAIN_DATA_DIR = '../Training'
+    TEST_DATA_DIR = '../Test'
+    #NUM_CLASSES = 2  # Binary classification for fire detection
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using {device} device")
+
+
+    # Get data loaders
+    # VGG16 preprocessing
+    data_transforms = transforms.Compose([
+        transforms.Resize((IMG_HEIGHT, IMG_WIDTH)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    ])
+
+    # Load the entire dataset using ImageFolder
+    train_dataset = datasets.ImageFolder(root=TRAIN_DATA_DIR, transform=data_transforms)
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE)
+    class_names = train_dataset.classes
+    test_dataset = datasets.ImageFolder(root=TEST_DATA_DIR, transform=data_transforms)
+    test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False)
+
     print(f"Classes: {class_names}")
+
+    # Get DataLoaders
+    #train_loader, val_loader, class_names = get_dataloaders(DATA_DIR, batch_size=BATCH_SIZE)
+    #print(f"Classes: {class_names}")
 
     # Initialize model, criterion, and optimizer
     model = get_vgg16_model(pretrained=True).to(device)
@@ -115,7 +148,7 @@ def main():
     
     criterion = nn.BCEWithLogitsLoss()
 
-    best_val_acc = 0.0
+    best_test_acc = 0.0
     start_time = time.time()
 
     print("--- Starting VGG16 Transfer Learning ---")
@@ -125,19 +158,19 @@ def main():
         train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, device)
         print(f"Training Loss: {train_loss:.4f}, Training Accuracy: {train_acc:.4f}")
         
-        val_loss, val_acc = validate(model, val_loader, criterion, device)
-        print(f"Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_acc:.4f}")
+        test_loss, test_acc = validate(model, test_loader, criterion, device)
+        print(f"Test Accuracy: {test_acc:.4f}")
 
         # Save the model if it has the best validation accuracy so far
-        if val_acc > best_val_acc:
-            best_val_acc = val_acc
+        if test_acc > best_test_acc:
+            best_test_acc = test_acc
             torch.save(model.state_dict(), model_save_path)
-            print(f"New best model saved to {model_save_path} with accuracy: {best_val_acc:.4f}")
+            print(f"New best model saved to {model_save_path} with accuracy: {best_test_acc:.4f}")
 
     total_time = time.time() - start_time
     print(f"\n--- Finished Training ---")
     print(f"Total training time: {total_time/60:.2f} minutes")
-    print(f"Best validation accuracy: {best_val_acc:.4f}")
+    print(f"Best validation accuracy: {best_test_acc:.4f}")
 
 if __name__ == '__main__':
     main() 
