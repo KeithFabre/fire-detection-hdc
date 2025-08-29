@@ -177,6 +177,14 @@ class OnlineHD(nn.Module):
 
         return self
 
+    def normalize(self):
+        """Normalize the model weights"""
+        self.model.weight.data = F.normalize(self.model.weight.data, dim=1)
+    
+    def predict(self, samples: Tensor) -> Tensor:
+        """Predict class labels"""
+        return torch.argmax(self.model(self.encoder(samples)), dim=-1)
+
 
 class NeuralHD(nn.Module):
     r"""Implements `Scalable edge-based hyperdimensional learning system with brain-like neural adaptation <https://dl.acm.org/doi/abs/10.1145/3458817.3480958>`_.
