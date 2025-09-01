@@ -435,7 +435,7 @@ print(f"RAM Peak (Training) - Mean: {sum(ram_peaks_training)/len(ram_peaks_train
 print(f"RAM Peak (Testing) - Mean: {sum(ram_peaks_testing)/len(ram_peaks_testing):.1f} MB")
 
 # Save all results to JSON file
-output_file = f'hdc_metrics_{NUM_RUNS}_runs_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json'
+output_file = f'hdc_record_based_metrics_{NUM_RUNS}_runs_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json'
 final_output = {
     'experiment_info': {
         'total_runs': NUM_RUNS,
