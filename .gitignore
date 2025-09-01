@@ -5,6 +5,14 @@ Training/
 # Ignore virtual environment
 tccenv/
 
+model_manual/
+
+code_snipets/
+
+cnn_flame_paper/
+
+data/
+
 # g
 
 # Python ignores
