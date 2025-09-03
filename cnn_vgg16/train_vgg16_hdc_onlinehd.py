@@ -226,7 +226,7 @@ def extract_features(model, x):
 # Configuration
 TRAIN_DATA_DIR = '../Training'
 TEST_DATA_DIR = '../Test'
-NUM_CLASSES = 2  # Binary classification for fire detection
+NUM_CLASSES = 3  # Binary classification for fire detection
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using {device} device")

@@ -38,7 +38,7 @@ except ImportError:
 # vgg16 expects 224x224 images
 IMG_WIDTH = 224
 IMG_HEIGHT = 224
-BATCH_SIZE = 8
+BATCH_SIZE = 32
 
 # HDC parameters
 DIMENSIONS = 1000  # Hypervector dimension
