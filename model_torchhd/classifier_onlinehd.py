@@ -34,10 +34,11 @@ if cuda_available:
 # =============================================================================
 # CONFIGURATION - Modify these parameters
 # =============================================================================
-NUM_RUNS = 1  # Number of runs per classifier
-DIMENSIONS = 1024  # number of hypervector dimensions
-BATCH_SIZE = 1  # set batch size to 1 for minimal memory usage
-IMG_SIZE = 64  # reduced image size for faster processing (from 256x256 to 64x64)
+NUM_RUNS = 3  
+DIMENSIONS = 1024  
+BATCH_SIZE = 8  
+IMG_SIZE = 64  
+NUM_EPOCHS = 3
 # =============================================================================
 
 # Define the same transform as in random_projection.py with added flattening
@@ -69,7 +70,7 @@ print(f"Number of classes: {num_classes}")
 
 params = {
     "OnlineHD": {
-        "epochs": 10,
+        "epochs": NUM_EPOCHS,
     }
 }
 

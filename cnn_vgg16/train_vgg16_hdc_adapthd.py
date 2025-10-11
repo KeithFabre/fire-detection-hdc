@@ -25,6 +25,7 @@ import torchhd.functional as functional
 import psutil
 import json
 from datetime import datetime
+from sklearn.metrics import classification_report, confusion_matrix
 
 # Try to import codecarbon
 try:
@@ -43,6 +44,8 @@ BATCH_SIZE = 32
 # HDC parameters
 DIMENSIONS = 1000  # Hypervector dimension
 NUM_LEVELS = 100   # Number of levels for encoding
+
+NUM_EPOCHS = 10
 
 # =============================================================================
 # CONFIGURATION - Modify these parameters
@@ -367,7 +370,7 @@ for run_num in range(1, NUM_RUNS + 1):
     }
     
     # Create and train model
-    epochs = 10
+    epochs = NUM_EPOCHS 
     model = AdaptHD(feature_size, DIMENSIONS, NUM_CLASSES, device=device, epochs=epochs)
     model.to(device)
     
@@ -534,6 +537,16 @@ for run_num in range(1, NUM_RUNS + 1):
     
     # Add to results array
     all_results.append(run_metrics)
+    
+    # Compute classification metrics for this run
+    run_classification_report = classification_report(all_labels, all_predictions, target_names=class_names, output_dict=True)
+    run_confusion_matrix = confusion_matrix(all_labels, all_predictions).tolist()
+    
+    # Add classification metrics to run_metrics
+    run_metrics['classification_metrics'] = {
+        'classification_report': run_classification_report,
+        'confusion_matrix': run_confusion_matrix
+    }
     
     # Print results for this run
     print(f"\nRUN {run_num} RESULTS:")

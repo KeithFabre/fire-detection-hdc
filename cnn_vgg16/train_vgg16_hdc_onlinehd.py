@@ -25,6 +25,7 @@ import torchhd.functional as functional
 import psutil
 import json
 from datetime import datetime
+from sklearn.metrics import classification_report, confusion_matrix
 
 # Try to import codecarbon
 try:
@@ -39,6 +40,8 @@ except ImportError:
 IMG_WIDTH = 224
 IMG_HEIGHT = 224
 BATCH_SIZE = 32
+
+NUM_EPOCHS = 10
 
 # HDC parameters
 DIMENSIONS = 1000  # Hypervector dimension
@@ -226,7 +229,7 @@ def extract_features(model, x):
 # Configuration
 TRAIN_DATA_DIR = '../Training'
 TEST_DATA_DIR = '../Test'
-NUM_CLASSES = 3  # Binary classification for fire detection
+NUM_CLASSES = 2  # Binary classification for fire detection
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using {device} device")
@@ -351,7 +354,7 @@ for run_num in range(1, NUM_RUNS + 1):
     }
     
     # Create and train model
-    epochs = 10
+    epochs = NUM_EPOCHS 
     model = OnlineHD(feature_size, DIMENSIONS, NUM_CLASSES, device=device, epochs=epochs)
     model.to(device)
     
@@ -500,6 +503,10 @@ for run_num in range(1, NUM_RUNS + 1):
     total_testing_energy = testing_cpu_energy + testing_gpu_energy
     total_emissions = training_emissions + testing_emissions
     
+    # Compute classification metrics for this run
+    run_classification_report = classification_report(all_labels, all_predictions, target_names=class_names, output_dict=True)
+    run_confusion_matrix = confusion_matrix(all_labels, all_predictions).tolist()
+    
     # Update run metrics
     run_metrics['training_time'] = training_time
     run_metrics['prediction_time'] = testing_time
@@ -515,6 +522,10 @@ for run_num in range(1, NUM_RUNS + 1):
     run_metrics['energy_consumption']['testing']['total_kwh'] = total_testing_energy
     run_metrics['gpu_memory']['training_peak_mb'] = training_memory['peak_mb']
     run_metrics['gpu_memory']['testing_peak_mb'] = testing_memory['peak_mb']
+    run_metrics['classification_metrics'] = {
+        'classification_report': run_classification_report,
+        'confusion_matrix': run_confusion_matrix
+    }
     
     # Add to results array
     all_results.append(run_metrics)

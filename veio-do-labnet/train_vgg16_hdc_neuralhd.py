@@ -1,4 +1,4 @@
-# Modified for VGG16 feature extraction + Record-based HDC classification with comprehensive metrics
+# Modified for VGG16 feature extraction + NeuralHD HDC classification with comprehensive metrics
 
 import torch
 import torch.nn as nn
@@ -12,15 +12,19 @@ from torchvision import datasets, transforms
 from torch.utils.data import DataLoader, random_split, Subset
 
 # Import for HDC
-import torchhd
 from torchhd import embeddings
 from torchhd.models import Centroid
+import torch.nn.functional as F
+from torch import Tensor
+from torchhd.embeddings import  Random, Level, Sinusoid
+import math 
+from tqdm import trange
+import torchhd.functional as functional
 
 # Import for metrics
 import psutil
 import json
 from datetime import datetime
-from sklearn.metrics import classification_report, confusion_matrix
 
 # Try to import codecarbon
 try:
@@ -35,6 +39,7 @@ except ImportError:
 IMG_WIDTH = 224
 IMG_HEIGHT = 224
 BATCH_SIZE = 32
+NUM_EPOCHS = 20
 
 # HDC parameters
 DIMENSIONS = 1000  # Hypervector dimension
@@ -46,33 +51,83 @@ NUM_LEVELS = 100   # Number of levels for encoding
 NUM_RUNS = 3  # Number of experimental runs
 # =============================================================================
 
-class RecordEncoder(nn.Module):
-    """
-    Encoder for converting features to hypervectors using random projection and scatter coding.
-    Using consistent MAP tensor type for both position and value.
-    """
-    def __init__(self, out_features, size, levels, low, high, device=None):
-        super(RecordEncoder, self).__init__()
-        self.device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        
-        # Random projection for position (MAP)
-        self.position = embeddings.Random(size, out_features, vsa="MAP")
-        # Level encoding for value (also MAP for consistency)
-        self.value = embeddings.Level(levels, out_features, low=low, high=high, vsa="MAP")
+class NeuralHD(nn.Module):
+    r"""Implements `Scalable edge-based hyperdimensional learning system with brain-like neural adaptation <https://dl.acm.org/doi/abs/10.1145/3458817.3480958>`_.
 
-    def forward(self, x):
-        # Process in batches to avoid memory issues
-        x = x.to(self.device)
-        
-        # Get position and value hypervectors (both MAP)
-        pos_hv = self.position.weight
-        val_hv = self.value(x)
-        
-        # Bind position and value hypervectors
-        sample_hv = torchhd.bind(pos_hv, val_hv)
-        # Create multiset of hypervectors
-        sample_hv = torchhd.multiset(sample_hv)
-        return sample_hv
+    Args:
+        n_features (int): Size of each input sample.
+        n_dimensions (int): The number of hidden dimensions to use.
+        n_classes (int): The number of classes.
+        regen_freq (int, optional): The frequency in epochs at which to regenerate hidden dimensions.
+        regen_rate (float, optional): The fraction of hidden dimensions to regenerate.
+        epochs (int, optional): The number of iteration over the training data.
+        lr (float, optional): The learning rate.
+        device (``torch.device``, optional):  the desired device of the weights. Default: if ``None``, uses the current device for the default tensor type (see ``torch.set_default_tensor_type()``). ``device`` will be the CPU for CPU tensor types and the current CUDA device for CUDA tensor types.
+        dtype (``torch.dtype``, optional): the desired data type of the weights. Default: if ``None``, uses ``torch.get_default_dtype()``.
+
+    """
+
+    model: Centroid
+    encoder: Sinusoid
+
+    def __init__(
+        self,
+        n_features: int,
+        n_dimensions: int,
+        n_classes: int,
+        *,
+        regen_freq: int = 20,
+        regen_rate: float = 0.04,
+        epochs: int = 120,
+        lr: float = 0.37,
+        device: torch.device = None,
+        dtype: torch.dtype = None
+    ) -> None:
+        super().__init__()
+
+        self.n_features = n_features
+        self.n_dimensions = n_dimensions
+        self.n_classes = n_classes
+        self.regen_freq = regen_freq
+        self.regen_rate = regen_rate
+        self.epochs = epochs
+        self.lr = lr
+        self.device = device if device is not None else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.dtype = dtype if dtype is not None else torch.get_default_dtype()
+
+        self.encoder = Sinusoid(n_features, n_dimensions, device=self.device, dtype=self.dtype)
+        self.model = Centroid(n_dimensions, n_classes, device=self.device, dtype=self.dtype)
+
+    def fit(self, input: Tensor, target: Tensor):
+        encoded = self.encoder(input)
+        n_regen_dims = math.ceil(self.regen_rate * self.n_dimensions)
+        self.model.add(encoded, target)
+
+        for epoch_idx in trange(1, self.epochs, desc="fit", disable=True):  # Disable progress bar
+            encoded = self.encoder(input)
+            self.model.add_adapt(encoded, target, lr=self.lr)
+
+            # Regenerate feature dimensions
+            if (epoch_idx % self.regen_freq) == (self.regen_freq - 1):
+                weight = F.normalize(self.model.weight, dim=1)
+                scores = torch.var(weight, dim=0)
+
+                regen_dims = torch.topk(scores, n_regen_dims, largest=False).indices
+                self.model.weight.data[:, regen_dims].zero_()
+                self.encoder.weight.data[regen_dims, :].normal_()
+                self.encoder.bias.data[:, regen_dims].uniform_(0, 2 * math.pi)
+
+        return self
+
+    def forward(self, samples: Tensor) -> Tensor:
+        return self.model(self.encoder(samples))
+
+    def predict(self, samples: Tensor) -> Tensor:
+        return torch.argmax(self(samples), dim=-1)
+    
+    def normalize(self):
+        """Normalize the model weights"""
+        self.model.weight.data = F.normalize(self.model.weight.data, dim=1)
 
 # GPU monitoring functions using PyTorch
 class GPUMonitor:
@@ -237,6 +292,7 @@ all_results = []
 print(f"\n{'='*60}")
 print(f"STARTING {NUM_RUNS} EXPERIMENTAL RUNS")
 print(f"{'='*60}")
+print(f"{NUM_EPOCHS} EPOCHS")
 
 # Run the experiment multiple times
 for run_num in range(1, NUM_RUNS + 1):
@@ -296,16 +352,15 @@ for run_num in range(1, NUM_RUNS + 1):
             'batch_size': BATCH_SIZE,
             'img_size': IMG_WIDTH,
             'feature_size': feature_size,
-            'num_levels': NUM_LEVELS,
             'num_classes': NUM_CLASSES,
-            'model_type': 'VGG16_RecordBased'
+            'model_type': 'VGG16_NeuralHD'
         }
     }
     
-    # Create record encoder and centroid model
-    record_encode = RecordEncoder(DIMENSIONS, feature_size, NUM_LEVELS, min_val, max_val, device=device)
-    record_encode = record_encode.to(device)
-    model = Centroid(DIMENSIONS, NUM_CLASSES)
+    # Create and train model
+    epochs = NUM_EPOCHS
+    regen_freq = 5
+    model = NeuralHD(feature_size, DIMENSIONS, NUM_CLASSES, device=device, epochs=epochs, regen_freq=regen_freq)
     model.to(device)
     
     # TRAINING PHASE
@@ -348,12 +403,7 @@ for run_num in range(1, NUM_RUNS + 1):
         with torch.no_grad():
             features = extract_features(vgg16, images)
         
-        # Encode features to hypervectors
-        encoded_features = record_encode(features)
-        
-        # Add to centroid model
-        for i in range(len(encoded_features)):
-            model.add(encoded_features[i].unsqueeze(0), labels[i].unsqueeze(0))
+        model.fit(features, labels)
         
         # Calculate energy for this batch
         batch_duration = time.time() - batch_start
@@ -422,12 +472,8 @@ for run_num in range(1, NUM_RUNS + 1):
             # Extract features
             features = extract_features(vgg16, images)
             
-            # Encode features to hypervectors
-            encoded_features = record_encode(features)
-            
             # Predict
-            outputs = model(encoded_features, dot=True)
-            predictions = outputs.argmax(dim=1)
+            predictions = model.predict(features)
             
             correct += (predictions == labels).sum().item()
             total += labels.size(0)
@@ -456,16 +502,6 @@ for run_num in range(1, NUM_RUNS + 1):
     
     # Stop carbon tracking for testing
     testing_emissions = stop_carbon_tracker(testing_tracker, testing_carbon_available)
-    
-    # Compute classification metrics for this run
-    run_classification_report = classification_report(all_labels, all_predictions, target_names=class_names, output_dict=True)
-    run_confusion_matrix = confusion_matrix(all_labels, all_predictions).tolist()
-    
-    # Add classification metrics to run_metrics
-    run_metrics['classification_metrics'] = {
-        'classification_report': run_classification_report,
-        'confusion_matrix': run_confusion_matrix
-    }
     
     # Calculate totals for this run
     total_training_energy = training_cpu_energy + training_gpu_energy
@@ -530,7 +566,7 @@ print(f"RAM Peak (Training) - Mean: {sum(ram_peaks_training)/len(ram_peaks_train
 print(f"RAM Peak (Testing) - Mean: {sum(ram_peaks_testing)/len(ram_peaks_testing):.1f} MB")
 
 # Save all results to JSON file
-output_file = f'vgg16_record_based_metrics_{NUM_RUNS}_runs_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json'
+output_file = f'vgg16_neuralhd_metrics_{NUM_RUNS}_runs_{NUM_EPOCHS}_epochs_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json'
 final_output = {
     'experiment_info': {
         'total_runs': NUM_RUNS,
@@ -540,9 +576,8 @@ final_output = {
             'img_size': IMG_WIDTH,
             'batch_size': BATCH_SIZE,
             'feature_size': feature_size,
-            'num_levels': NUM_LEVELS,
             'num_classes': NUM_CLASSES,
-            'model_type': 'VGG16_RecordBased'
+            'model_type': 'VGG16_NeuralHD'
         }
     },
     'summary_statistics': {

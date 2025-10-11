@@ -8,10 +8,10 @@ echo "======================================"
 
 python3 "train_vgg16_hdc_random_projection.py" # ok
 python3 "train_vgg16_hdc_record_based.py"      # ok
-python3 "train_vgg16_hdc_adapthd.py"           # rodar de novo com batch 32
-python3 "train_vgg16_hdc_neuralhd.py"          # ok
+python3 "train_vgg16_hdc_adapthd.py"           # ok
+python3 "train_vgg16_hdc_neuralhd.py"          # to testando com 20 épocas
 python3 "train_vgg16_hdc_onlinehd.py"          # ok
 
-#python3 "train.py"                             # ok
+#python3 "train.py"                             # treinando com 10 épocas
 
 echo "Selected experiments completed!" 

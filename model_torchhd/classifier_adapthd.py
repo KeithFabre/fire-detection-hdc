@@ -8,6 +8,8 @@ import time
 import psutil
 import json
 from datetime import datetime
+from sklearn.metrics import classification_report, confusion_matrix
+import os
 
 # Try to import codecarbon
 try:
@@ -34,11 +36,16 @@ if cuda_available:
 # =============================================================================
 # CONFIGURATION - Modify these parameters
 # =============================================================================
-NUM_RUNS = 1  # Number of runs per classifier
-DIMENSIONS = 1024  # number of hypervector dimensions
-BATCH_SIZE = 1  # set batch size to 1 for minimal memory usage
-IMG_SIZE = 64  # reduced image size for faster processing (from 256x256 to 64x64)
+IMG_SIZE = 64       
+DIMENSIONS = 1000   
+NUM_EPOCHS = 3 
+NUM_RUNS = 3     
+BATCH_SIZE = 8      
+MODEL_SAVE_DIR = "saved_models"  # Directory to save models
 # =============================================================================
+
+# Create model save directory
+os.makedirs(MODEL_SAVE_DIR, exist_ok=True)
 
 # Define the same transform as in random_projection.py with added flattening
 transform = transforms.Compose([
@@ -58,7 +65,8 @@ test_ld = DataLoader(test_ds, batch_size=BATCH_SIZE, shuffle=False)
 
 # Get number of classes from the dataset
 num_classes = len(train_ds.classes)
-print(f"Training Classes: {train_ds.classes}")
+class_names = train_ds.classes
+print(f"Training Classes: {class_names}")
 print(f"Test Classes: {test_ds.classes}")
 
 # Calculate number of features (flattened image size)
@@ -69,7 +77,7 @@ print(f"Number of classes: {num_classes}")
 
 params = {
     "AdaptHD": {
-        "epochs": 10,
+        "epochs": NUM_EPOCHS,
     }
 }
 
@@ -163,8 +171,36 @@ def stop_carbon_tracker(tracker, available):
         print(f"Warning: Could not stop carbon tracker: {e}")
         return 0.0
 
+# Model saving function
+def save_model(model, model_name, run_num, accuracy, timestamp):
+    """Save the trained model to disk"""
+    model_filename = f"{model_name}_run_{run_num}_acc_{accuracy:.2f}_{timestamp}.pth"
+    model_path = os.path.join(MODEL_SAVE_DIR, model_filename)
+    
+    # Save model state and metadata
+    torch.save({
+        'model_state_dict': model.state_dict(),
+        'model_name': model_name,
+        'run_number': run_num,
+        'accuracy': accuracy,
+        'timestamp': timestamp,
+        'dimensions': DIMENSIONS,
+        'num_features': num_features,
+        'num_classes': num_classes,
+        'class_names': class_names,
+        'parameters': params[model_name]
+    }, model_path)
+    
+    print(f"Model saved to: {model_path}")
+    return model_path
+
 # Initialize results array for all classifiers and runs
 all_results = []
+best_model_info = {
+    'path': None,
+    'accuracy': 0,
+    'run_number': 0
+}
 
 print(f"\n{'='*60}")
 print(f"STARTING EXPERIMENTS FOR {len(classifiers)} CLASSIFIERS")
@@ -336,6 +372,8 @@ for classifier in classifiers:
         
         correct = 0
         total = 0
+        all_predictions = []
+        all_labels = []
         
         with torch.no_grad():
             for samples, labels in tqdm(test_ld, desc="Testing"):
@@ -359,6 +397,10 @@ for classifier in classifiers:
                 
                 total += labels.size(0)
                 correct += (predicted == labels).sum().item()
+                
+                # Collect all predictions and labels for classification metrics
+                all_predictions.extend(predicted.cpu().numpy())
+                all_labels.extend(labels.cpu().numpy())
                 
                 # Calculate energy for this batch
                 batch_duration = time.time() - batch_start
@@ -384,6 +426,16 @@ for classifier in classifiers:
         total_testing_energy = testing_cpu_energy + testing_gpu_energy
         total_emissions = training_emissions + testing_emissions
         
+        # Compute classification metrics for this run
+        run_classification_report = classification_report(all_labels, all_predictions, target_names=class_names, output_dict=True)
+        run_confusion_matrix = confusion_matrix(all_labels, all_predictions).tolist()
+        
+        # Add classification metrics to run_metrics
+        run_metrics['classification_metrics'] = {
+            'classification_report': run_classification_report,
+            'confusion_matrix': run_confusion_matrix
+        }
+        
         # Update run metrics
         run_metrics['training_time'] = training_time
         run_metrics['prediction_time'] = testing_time
@@ -400,6 +452,18 @@ for classifier in classifiers:
         run_metrics['gpu_memory']['training_peak_mb'] = training_memory['peak_mb']
         run_metrics['gpu_memory']['testing_peak_mb'] = testing_memory['peak_mb']
         
+        # SAVE THE MODEL FOR THIS RUN
+        current_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        model_path = save_model(model, classifier, run_num, final_accuracy * 100, current_timestamp)
+        run_metrics['model_path'] = model_path
+        
+        # Update best model info if this is the best so far
+        if final_accuracy * 100 > best_model_info['accuracy']:
+            best_model_info['accuracy'] = final_accuracy * 100
+            best_model_info['run_number'] = run_num
+            best_model_info['path'] = model_path
+            best_model_info['timestamp'] = current_timestamp
+        
         # Add to classifier results
         classifier_results.append(run_metrics)
         
@@ -412,6 +476,13 @@ for classifier in classifiers:
         print(f"Total Energy: {total_training_energy + total_testing_energy:.6f} kWh")
         print(f"RAM Usage - Training: {run_metrics['ram_usage']['training']['peak_rss_mb']:.1f} MB (peak)")
         print(f"RAM Usage - Testing: {run_metrics['ram_usage']['testing']['peak_rss_mb']:.1f} MB (peak)")
+        print(f"Model saved to: {model_path}")
+        
+        # Print classification report for this run
+        print(f"\n{classifier} - RUN {run_num} CLASSIFICATION REPORT:")
+        print(classification_report(all_labels, all_predictions, target_names=class_names))
+        print(f"CONFUSION MATRIX:")
+        print(confusion_matrix(all_labels, all_predictions))
         
         # Clear GPU memory between runs
         if cuda_available:
@@ -424,6 +495,18 @@ for classifier in classifiers:
     accuracies = [run['accuracy'] for run in classifier_results]
     print(f"\n{classifier} SUMMARY ({NUM_RUNS} runs):")
     print(f"Accuracy - Mean: {sum(accuracies)/len(accuracies):.3f}%, Std: {(sum([(x-sum(accuracies)/len(accuracies))**2 for x in accuracies])/len(accuracies))**0.5:.3f}%")
+
+# Save best model as a separate file for easy access
+if best_model_info['path']:
+    best_model_final_path = os.path.join(MODEL_SAVE_DIR, f"BEST_{classifier}_acc_{best_model_info['accuracy']:.2f}.pth")
+    
+    # Copy the best model to a standardized name
+    import shutil
+    shutil.copy2(best_model_info['path'], best_model_final_path)
+    print(f"\n{'='*50}")
+    print(f"BEST MODEL SAVED: {best_model_final_path}")
+    print(f"Best Accuracy: {best_model_info['accuracy']:.2f}% (from Run {best_model_info['run_number']})")
+    print(f"{'='*50}")
 
 # FINAL SUMMARY
 print(f"\n{'='*60}")
@@ -438,6 +521,8 @@ final_output = {
         'total_classifiers': len(classifiers),
         'runs_per_classifier': NUM_RUNS,
         'experiment_date': datetime.now().isoformat(),
+        'best_model': best_model_info,
+        'model_save_directory': MODEL_SAVE_DIR,
         'configuration': {
             'dimensions': DIMENSIONS,
             'img_size': IMG_SIZE,
@@ -482,4 +567,13 @@ with open(output_file, 'w') as f:
     json.dump(final_output, f, indent=2)
 
 print(f"\nResults saved to: {output_file}")
+print(f"All models saved in: {MODEL_SAVE_DIR}")
 print("="*60)
+
+# Print final classification report from the last run of the last classifier
+if all_results:
+    last_run = all_results[-1]
+    print(f"\nFINAL CLASSIFICATION REPORT (from {last_run['classifier']} - Run {last_run['run_number']}):")
+    print(classification_report(all_labels, all_predictions, target_names=class_names))
+    print(f"FINAL CONFUSION MATRIX:")
+    print(confusion_matrix(all_labels, all_predictions))

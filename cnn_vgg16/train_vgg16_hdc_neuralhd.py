@@ -25,6 +25,7 @@ import torchhd.functional as functional
 import psutil
 import json
 from datetime import datetime
+from sklearn.metrics import classification_report, confusion_matrix
 
 # Try to import codecarbon
 try:
@@ -39,6 +40,7 @@ except ImportError:
 IMG_WIDTH = 224
 IMG_HEIGHT = 224
 BATCH_SIZE = 32
+NUM_EPOCHS = 10
 
 # HDC parameters
 DIMENSIONS = 1000  # Hypervector dimension
@@ -291,6 +293,7 @@ all_results = []
 print(f"\n{'='*60}")
 print(f"STARTING {NUM_RUNS} EXPERIMENTAL RUNS")
 print(f"{'='*60}")
+print(f"{NUM_EPOCHS} EPOCHS")
 
 # Run the experiment multiple times
 for run_num in range(1, NUM_RUNS + 1):
@@ -356,7 +359,7 @@ for run_num in range(1, NUM_RUNS + 1):
     }
     
     # Create and train model
-    epochs = 10
+    epochs = NUM_EPOCHS
     regen_freq = 5
     model = NeuralHD(feature_size, DIMENSIONS, NUM_CLASSES, device=device, epochs=epochs, regen_freq=regen_freq)
     model.to(device)
@@ -525,6 +528,16 @@ for run_num in range(1, NUM_RUNS + 1):
     # Add to results array
     all_results.append(run_metrics)
     
+    # Compute classification metrics for this run
+    run_classification_report = classification_report(all_labels, all_predictions, target_names=class_names, output_dict=True)
+    run_confusion_matrix = confusion_matrix(all_labels, all_predictions).tolist()
+    
+    # Add classification metrics to run_metrics
+    run_metrics['classification_metrics'] = {
+        'classification_report': run_classification_report,
+        'confusion_matrix': run_confusion_matrix
+    }
+    
     # Print results for this run
     print(f"\nRUN {run_num} RESULTS:")
     print(f"Training Time: {training_time:.2f}s")
@@ -564,7 +577,7 @@ print(f"RAM Peak (Training) - Mean: {sum(ram_peaks_training)/len(ram_peaks_train
 print(f"RAM Peak (Testing) - Mean: {sum(ram_peaks_testing)/len(ram_peaks_testing):.1f} MB")
 
 # Save all results to JSON file
-output_file = f'vgg16_neuralhd_metrics_{NUM_RUNS}_runs_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json'
+output_file = f'vgg16_neuralhd_metrics_{NUM_RUNS}_runs_{NUM_EPOCHS}_epochs_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json'
 final_output = {
     'experiment_info': {
         'total_runs': NUM_RUNS,

@@ -1,4 +1,4 @@
-# Modified for VGG16 feature extraction + Record-based HDC classification with comprehensive metrics
+# Modified for VGG16 feature extraction + OnlineHD HDC classification with comprehensive metrics
 
 import torch
 import torch.nn as nn
@@ -12,15 +12,19 @@ from torchvision import datasets, transforms
 from torch.utils.data import DataLoader, random_split, Subset
 
 # Import for HDC
-import torchhd
 from torchhd import embeddings
 from torchhd.models import Centroid
+import torch.nn.functional as F
+from torch import Tensor
+from torchhd.embeddings import  Random, Level, Sinusoid
+import math 
+from tqdm import trange
+import torchhd.functional as functional
 
 # Import for metrics
 import psutil
 import json
 from datetime import datetime
-from sklearn.metrics import classification_report, confusion_matrix
 
 # Try to import codecarbon
 try:
@@ -46,33 +50,78 @@ NUM_LEVELS = 100   # Number of levels for encoding
 NUM_RUNS = 3  # Number of experimental runs
 # =============================================================================
 
-class RecordEncoder(nn.Module):
-    """
-    Encoder for converting features to hypervectors using random projection and scatter coding.
-    Using consistent MAP tensor type for both position and value.
-    """
-    def __init__(self, out_features, size, levels, low, high, device=None):
-        super(RecordEncoder, self).__init__()
-        self.device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        
-        # Random projection for position (MAP)
-        self.position = embeddings.Random(size, out_features, vsa="MAP")
-        # Level encoding for value (also MAP for consistency)
-        self.value = embeddings.Level(levels, out_features, low=low, high=high, vsa="MAP")
+# Adapted from: https://gitlab.com/biaslab/onlinehd/
+class OnlineHD(nn.Module):
+    r"""Implements `OnlineHD: Robust, Efficient, and Single-Pass Online Learning Using Hyperdimensional System <https://ieeexplore.ieee.org/abstract/document/9474107>`_.
 
-    def forward(self, x):
-        # Process in batches to avoid memory issues
-        x = x.to(self.device)
+    Args:
+        n_features (int): Size of each input sample.
+        n_dimensions (int): The number of hidden dimensions to use.
+        n_classes (int): The number of classes.
+        epochs (int, optional): The number of iteration over the training data.
+        lr (float, optional): The learning rate.
+        device (``torch.device``, optional):  the desired device of the weights. Default: if ``None``, uses the current device for the default tensor type (see ``torch.set_default_tensor_type()``). ``device`` will be the CPU for CPU tensor types and the current CUDA device for CUDA tensor types.
+        dtype (``torch.dtype``, optional): the desired data type of the weights. Default: if ``None``, uses ``torch.get_default_dtype()``.
+
+    """
+
+    encoder: Sinusoid
+    model: Centroid
+
+    def __init__(
+        self,
+        n_features: int,
+        n_dimensions: int,
+        n_classes: int,
+        *,
+        epochs: int = 120,
+        lr: float = 0.035,
+        device: torch.device = None,
+        dtype: torch.dtype = None
+    ) -> None:
+        super().__init__()  # Remove parameters from super()
         
-        # Get position and value hypervectors (both MAP)
-        pos_hv = self.position.weight
-        val_hv = self.value(x)
-        
-        # Bind position and value hypervectors
-        sample_hv = torchhd.bind(pos_hv, val_hv)
-        # Create multiset of hypervectors
-        sample_hv = torchhd.multiset(sample_hv)
-        return sample_hv
+        self.n_features = n_features
+        self.n_dimensions = n_dimensions
+        self.n_classes = n_classes
+        self.epochs = epochs
+        self.lr = lr
+        self.device = device if device is not None else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.dtype = dtype if dtype is not None else torch.get_default_dtype()
+
+        self.encoder = Sinusoid(n_features, n_dimensions, device=self.device, dtype=self.dtype)
+        self.model = Centroid(n_dimensions, n_classes, device=self.device, dtype=self.dtype)
+
+    def fit(self, input: Tensor, target: Tensor):
+
+        for _ in trange(self.epochs, desc="fit", disable=True):            
+            samples = input.to(self.device)
+            labels = target.to(self.device)
+
+            encoded = self.encoder(samples)
+            self.model.add_online(encoded, labels, lr=self.lr)
+
+        return self
+
+    def fit_data_loader(self, data_loader: DataLoader):
+
+        for _ in trange(self.epochs, desc="fit", disable=True):
+            for samples, labels in data_loader:
+                samples = samples.to(self.device)
+                labels = labels.to(self.device)
+
+                encoded = self.encoder(samples)
+                self.model.add_online(encoded, labels, lr=self.lr)
+
+        return self
+
+    def normalize(self):
+        """Normalize the model weights"""
+        self.model.weight.data = F.normalize(self.model.weight.data, dim=1)
+    
+    def predict(self, samples: Tensor) -> Tensor:
+        """Add predict method for consistency"""
+        return torch.argmax(self.model(self.encoder(samples)), dim=-1)
 
 # GPU monitoring functions using PyTorch
 class GPUMonitor:
@@ -296,16 +345,14 @@ for run_num in range(1, NUM_RUNS + 1):
             'batch_size': BATCH_SIZE,
             'img_size': IMG_WIDTH,
             'feature_size': feature_size,
-            'num_levels': NUM_LEVELS,
             'num_classes': NUM_CLASSES,
-            'model_type': 'VGG16_RecordBased'
+            'model_type': 'VGG16_OnlineHD'
         }
     }
     
-    # Create record encoder and centroid model
-    record_encode = RecordEncoder(DIMENSIONS, feature_size, NUM_LEVELS, min_val, max_val, device=device)
-    record_encode = record_encode.to(device)
-    model = Centroid(DIMENSIONS, NUM_CLASSES)
+    # Create and train model
+    epochs = 10
+    model = OnlineHD(feature_size, DIMENSIONS, NUM_CLASSES, device=device, epochs=epochs)
     model.to(device)
     
     # TRAINING PHASE
@@ -348,12 +395,7 @@ for run_num in range(1, NUM_RUNS + 1):
         with torch.no_grad():
             features = extract_features(vgg16, images)
         
-        # Encode features to hypervectors
-        encoded_features = record_encode(features)
-        
-        # Add to centroid model
-        for i in range(len(encoded_features)):
-            model.add(encoded_features[i].unsqueeze(0), labels[i].unsqueeze(0))
+        model.fit(features, labels)
         
         # Calculate energy for this batch
         batch_duration = time.time() - batch_start
@@ -422,12 +464,8 @@ for run_num in range(1, NUM_RUNS + 1):
             # Extract features
             features = extract_features(vgg16, images)
             
-            # Encode features to hypervectors
-            encoded_features = record_encode(features)
-            
             # Predict
-            outputs = model(encoded_features, dot=True)
-            predictions = outputs.argmax(dim=1)
+            predictions = model.predict(features)
             
             correct += (predictions == labels).sum().item()
             total += labels.size(0)
@@ -456,16 +494,6 @@ for run_num in range(1, NUM_RUNS + 1):
     
     # Stop carbon tracking for testing
     testing_emissions = stop_carbon_tracker(testing_tracker, testing_carbon_available)
-    
-    # Compute classification metrics for this run
-    run_classification_report = classification_report(all_labels, all_predictions, target_names=class_names, output_dict=True)
-    run_confusion_matrix = confusion_matrix(all_labels, all_predictions).tolist()
-    
-    # Add classification metrics to run_metrics
-    run_metrics['classification_metrics'] = {
-        'classification_report': run_classification_report,
-        'confusion_matrix': run_confusion_matrix
-    }
     
     # Calculate totals for this run
     total_training_energy = training_cpu_energy + training_gpu_energy
@@ -530,7 +558,7 @@ print(f"RAM Peak (Training) - Mean: {sum(ram_peaks_training)/len(ram_peaks_train
 print(f"RAM Peak (Testing) - Mean: {sum(ram_peaks_testing)/len(ram_peaks_testing):.1f} MB")
 
 # Save all results to JSON file
-output_file = f'vgg16_record_based_metrics_{NUM_RUNS}_runs_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json'
+output_file = f'vgg16_onlinehd_metrics_{NUM_RUNS}_runs_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json'
 final_output = {
     'experiment_info': {
         'total_runs': NUM_RUNS,
@@ -540,9 +568,8 @@ final_output = {
             'img_size': IMG_WIDTH,
             'batch_size': BATCH_SIZE,
             'feature_size': feature_size,
-            'num_levels': NUM_LEVELS,
             'num_classes': NUM_CLASSES,
-            'model_type': 'VGG16_RecordBased'
+            'model_type': 'VGG16_OnlineHD'
         }
     },
     'summary_statistics': {

@@ -35,7 +35,7 @@ if cuda_available:
     print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
 
 # =============================================================================
-# CONFIGURATION - Modify these parameters
+# CONFIGURATION 
 # =============================================================================
 NUM_RUNS = 3 
 DIMENSIONS = 1000

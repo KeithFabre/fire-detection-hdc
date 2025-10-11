@@ -20,6 +20,7 @@ from torchhd.models import Centroid
 import psutil
 import json
 from datetime import datetime
+from sklearn.metrics import classification_report, confusion_matrix
 
 # Try to import codecarbon
 try:
@@ -234,7 +235,7 @@ for run_num in range(1, NUM_RUNS + 1):
             'testing': 0,
             'total': 0
         },
-        'energy_consumment': {
+        'energy_consumption': {
             'training': {'cpu_kwh': 0, 'gpu_kwh': 0, 'total_kwh': 0},
             'testing': {'cpu_kwh': 0, 'gpu_kwh': 0, 'total_kwh': 0}
         },
@@ -430,6 +431,10 @@ for run_num in range(1, NUM_RUNS + 1):
     
     # Stop carbon tracking for testing
     testing_emissions = stop_carbon_tracker(testing_tracker, testing_carbon_available)
+    
+    # Compute classification metrics for this run
+    run_classification_report = classification_report(all_labels, all_predictions, target_names=class_names, output_dict=True)
+    run_confusion_matrix = confusion_matrix(all_labels, all_predictions).tolist()
     
     # Calculate totals for this run
     total_training_energy = training_cpu_energy + training_gpu_energy

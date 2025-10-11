@@ -9,6 +9,7 @@ from torchvision import datasets, transforms
 import psutil
 import json
 from datetime import datetime
+from sklearn.metrics import classification_report, confusion_matrix
 
 # Try to import codecarbon
 try:
@@ -21,7 +22,7 @@ except ImportError:
 
 # Import our custom modules
 #from dataset import get_dataloaders
-from model import get_vgg16_model
+from model_vgg16 import get_vgg16_model
 
 # --- Configuration ---
 DATA_DIR = '../Training'
@@ -410,6 +411,9 @@ def main():
         epoch_metrics['ram_usage']['testing']['end_vms_mb'] = final_ram_test['vms_mb']
         epoch_metrics['gpu_memory']['testing_peak_mb'] = testing_memory['peak_mb']
         
+        # Store testing time in metrics (coherent with HDC model implementation)
+        epoch_metrics['testing_time'] = testing_time
+        
         # Stop carbon tracking for testing
         testing_emissions = stop_carbon_tracker(testing_tracker, testing_carbon_available)
         epoch_metrics['carbon_emissions']['testing'] = testing_emissions
@@ -435,6 +439,31 @@ def main():
     print(f"Total training time: {total_time/60:.2f} minutes")
     print(f"Best validation accuracy: {best_test_acc:.4f}")
 
+    # Load best model for final evaluation
+    model.load_state_dict(torch.load(model_save_path))
+    model.eval()
+
+    # Compute final classification metrics on test set
+    all_predictions = []
+    all_labels = []
+
+    with torch.no_grad():
+        for inputs, labels in test_loader:
+            inputs, labels = inputs.to(device), labels.to(device)
+            outputs = model(inputs)
+            preds = torch.sigmoid(outputs) > 0.5
+            all_predictions.extend(preds.cpu().numpy().flatten())
+            all_labels.extend(labels.cpu().numpy().flatten())
+
+    # Compute classification report and confusion matrix
+    final_classification_report = classification_report(all_labels, all_predictions, target_names=class_names, output_dict=True)
+    final_confusion_matrix = confusion_matrix(all_labels, all_predictions).tolist()
+
+    print("\n--- Final Classification Report ---")
+    print(classification_report(all_labels, all_predictions, target_names=class_names))
+    print("\n--- Confusion Matrix ---")
+    print(confusion_matrix(all_labels, all_predictions))
+
     # Save all results to JSON file
     output_file = f'vgg16_training_metrics_{NUM_EPOCHS}_epochs_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json'
     final_output = {
@@ -450,6 +479,10 @@ def main():
             },
             'best_accuracy': best_test_acc,
             'total_time_minutes': total_time / 60
+        },
+        'classification_metrics': {
+            'classification_report': final_classification_report,
+            'confusion_matrix': final_confusion_matrix
         },
         'individual_epochs': all_epochs_metrics
     }

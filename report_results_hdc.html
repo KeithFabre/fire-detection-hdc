@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Relatório HDC vs CNN</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+  <style>
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin:0; padding:20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height:100vh; }
+    .container { max-width: 1400px; margin: 0 auto; background: rgba(255,255,255,0.95); border-radius: 20px; padding: 30px; box-shadow: 0 20px 40px rgba(0,0,0,0.1); }
+    h1 { text-align: center; color: #2c3e50; font-size: 2.3rem; margin-bottom: 10px; background: linear-gradient(45deg, #667eea, #764ba2); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .chart-container { background: #f8f4f0; border-radius: 15px; padding: 25px; margin: 25px 0; box-shadow: 0 8px 25px rgba(0,0,0,0.1); }
+    .chart-title { font-size: 1.2rem; font-weight: bold; color: #2c3e50; margin-bottom: 12px; text-align: center; }
+    .actions { text-align: right; margin-top: 10px; }
+    .btn { background: #2c3e50; color: #fff; border: none; padding: 8px 12px; border-radius: 8px; cursor: pointer; }
+    .btn:hover { background: #1f2a35; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Relatório Comparativo HDC vs CNN</h1>
+
+    <div class="chart-container">
+      <div class="chart-title">Comparação de Consumo Energético (kWh)</div>
+      <canvas id="energyChart"></canvas>
+      <div class="actions"><button class="btn" onclick="downloadCanvas('energyChart','grafico_energia.png')">Baixar PNG</button></div>
+    </div>
+
+    <div class="chart-container">
+      <div class="chart-title">Emissão de Carbono (kg CO₂)</div>
+      <canvas id="carbonChart"></canvas>
+      <div class="actions"><button class="btn" onclick="downloadCanvas('carbonChart','grafico_carbono.png')">Baixar PNG</button></div>
+    </div>
+
+    <div class="chart-container">
+      <div class="chart-title">Acurácia por Modelo (%)</div>
+      <canvas id="accuracyChart"></canvas>
+      <div class="actions"><button class="btn" onclick="downloadCanvas('accuracyChart','grafico_acuracia.png')">Baixar PNG</button></div>
+    </div>
+
+    <div class="chart-container">
+      <div class="chart-title">Tempo de Predição por Modelo (segundos)</div>
+      <canvas id="predictionChart"></canvas>
+      <div class="actions"><button class="btn" onclick="downloadCanvas('predictionChart','grafico_predicao.png')">Baixar PNG</button></div>
+    </div>
+
+    <div class="chart-container">
+      <div class="chart-title">Tempo de Treinamento vs Acurácia (escala log no tempo)</div>
+      <canvas id="scatterChart"></canvas>
+      <div class="actions"><button class="btn" onclick="downloadCanvas('scatterChart','tempo_vs_acuracia_log.png')">Baixar PNG</button></div>
+    </div>
+
+    <div class="chart-container">
+      <div class="chart-title">Tempo de Treinamento vs Acurácia (zoom 0–30 min)</div>
+      <canvas id="scatterChartZoom"></canvas>
+      <div class="actions"><button class="btn" onclick="downloadCanvas('scatterChartZoom','tempo_vs_acuracia_zoom.png')">Baixar PNG</button></div>
+    </div>
+  </div>
+
+  <script>
+    function downloadCanvas(canvasId, filename) {
+      const canvas = document.getElementById(canvasId);
+      if (!canvas) return;
+      canvas.toBlob(function(blob) {
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = filename;
+        link.click();
+        URL.revokeObjectURL(link.href);
+      }, 'image/png');
+    }
+
+    // Energia (barras) - cores por categoria
+    const energyCtx = document.getElementById('energyChart').getContext('2d');
+    new Chart(energyCtx, {
+      type: 'bar',
+      data: {
+        labels: ['CNN\n(40\népocas)', 'VGG16\n(10\népocas)', 'VGG16\n(20\népocas)', 'VGG16\n+\nAdaptHD', 'VGG16\n+\nNeuralHD', 'VGG16\n+\nOnlineHD', 'VGG16\n+\nRandomProj', 'VGG16\nRecordBased', 'HDC\nAdaptHD', 'HDC\nNeuralHD', 'HDC\nOnlineHD', 'HDC\nRandomProj', 'HDC\nRecordBased'],
+        datasets: [{
+          label: 'Energia (kWh)',
+          data: [5.21, 28.83, 57.62, 1.88, 1.8, 1.81, 0.0, 1.42, 0.33, 0.32, 0.32, 0.48, 2.72],
+          backgroundColor: ['rgba(231, 76, 60, 0.95)', 'rgba(192, 57, 43, 0.95)', 'rgba(192, 57, 43, 0.95)', 'rgba(39, 174, 96, 0.95)', 'rgba(39, 174, 96, 0.95)', 'rgba(39, 174, 96, 0.95)', 'rgba(39, 174, 96, 0.95)', 'rgba(39, 174, 96, 0.95)', 'rgba(241, 196, 15, 0.95)', 'rgba(241, 196, 15, 0.95)', 'rgba(241, 196, 15, 0.95)', 'rgba(241, 196, 15, 0.95)', 'rgba(241, 196, 15, 0.95)'],
+          borderColor: 'rgba(255, 255, 255, 1)',
+          borderWidth: 2
+        }]
+      },
+      options: {
+        responsive: true,
+        backgroundColor: '#f8f4f0',
+        scales: { 
+          y: { 
+            beginAtZero: true, 
+            title: { display: true, text: 'Energia (kWh)', font: { size: 20, weight: 'bold', color: '#000000' } }, 
+            ticks: { font: { size: 16, color: '#000000' } },
+            grid: { color: 'rgba(0, 0, 0, 0.3)' }
+          }, 
+          x: { 
+            ticks: { font: { size: 16, color: '#000000' } },
+            grid: { color: 'rgba(0, 0, 0, 0.3)' }
+          } 
+        },
+        plugins: { legend: { display: false, labels: { font: { size: 18, color: '#000000' } } } }
+      }
+    });
+
+    // Carbono (barras) - cores por categoria
+    const carbonCtx = document.getElementById('carbonChart').getContext('2d');
+    new Chart(carbonCtx, {
+      type: 'bar',
+      data: {
+        labels: ['CNN\n(40\népocas)', 'VGG16\n(10\népocas)', 'VGG16\n(20\népocas)', 'VGG16\n+\nAdaptHD', 'VGG16\n+\nNeuralHD', 'VGG16\n+\nOnlineHD', 'VGG16\n+\nRandomProj', 'VGG16\nRecordBased', 'HDC\nAdaptHD', 'HDC\nNeuralHD', 'HDC\nOnlineHD', 'HDC\nRandomProj', 'HDC\nRecordBased'],
+        datasets: [{
+          label: 'CO₂ (kg)',
+          data: [0.007566, 0.005003, 0.010026, 0.000339, 0.000339, 0.000327, 0.000326, 0.000281, 0.001308, 0.001299, 0.001314, 0.0002, 0.000692],
+          backgroundColor: ['rgba(231, 76, 60, 0.95)', 'rgba(192, 57, 43, 0.95)', 'rgba(192, 57, 43, 0.95)', 'rgba(39, 174, 96, 0.95)', 'rgba(39, 174, 96, 0.95)', 'rgba(39, 174, 96, 0.95)', 'rgba(39, 174, 96, 0.95)', 'rgba(39, 174, 96, 0.95)', 'rgba(241, 196, 15, 0.95)', 'rgba(241, 196, 15, 0.95)', 'rgba(241, 196, 15, 0.95)', 'rgba(241, 196, 15, 0.95)', 'rgba(241, 196, 15, 0.95)'],
+          borderColor: 'rgba(255, 255, 255, 1)',
+          borderWidth: 2
+        }]
+      },
+      options: {
+        responsive: true,
+        backgroundColor: '#f8f4f0',
+        scales: { 
+          y: { 
+            beginAtZero: true, 
+            title: { display: true, text: 'CO₂ (kg)', font: { size: 20, weight: 'bold', color: '#000000' } }, 
+            ticks: { font: { size: 16, color: '#000000' } },
+            grid: { color: 'rgba(0, 0, 0, 0.3)' }
+          }, 
+          x: { 
+            ticks: { font: { size: 16, color: '#000000' } },
+            grid: { color: 'rgba(0, 0, 0, 0.3)' }
+          } 
+        },
+        plugins: { legend: { display: false, labels: { font: { size: 18, color: '#000000' } } } }
+      }
+    });
+
+    // Acurácia (barras) - cores por categoria
+    const accuracyCtx = document.getElementById('accuracyChart').getContext('2d');
+    new Chart(accuracyCtx, {
+      type: 'bar',
+      data: {
+        labels: ['CNN\n(40\népocas)', 'VGG16\n(10\népocas)', 'VGG16\n(20\népocas)', 'VGG16\n+\nAdaptHD', 'VGG16\n+\nNeuralHD', 'VGG16\n+\nOnlineHD', 'VGG16\n+\nRandomProj', 'VGG16\nRecordBased', 'HDC\nAdaptHD', 'HDC\nNeuralHD', 'HDC\nOnlineHD', 'HDC\nRandomProj', 'HDC\nRecordBased'],
+        datasets: [{
+          label: 'Acurácia (%)',
+          data: [83.05, 62.59, 83.13, 40.39, 74.67, 40.79, 63.94, 65.21, 59.61, 59.61, 59.61, 59.44, 60.11],
+          backgroundColor: ['rgba(231, 76, 60, 0.95)', 'rgba(192, 57, 43, 0.95)', 'rgba(192, 57, 43, 0.95)', 'rgba(39, 174, 96, 0.95)', 'rgba(39, 174, 96, 0.95)', 'rgba(39, 174, 96, 0.95)', 'rgba(39, 174, 96, 0.95)', 'rgba(39, 174, 96, 0.95)', 'rgba(241, 196, 15, 0.95)', 'rgba(241, 196, 15, 0.95)', 'rgba(241, 196, 15, 0.95)', 'rgba(241, 196, 15, 0.95)', 'rgba(241, 196, 15, 0.95)'],
+          borderColor: 'rgba(255, 255, 255, 1)',
+          borderWidth: 2
+        }]
+      },
+      options: {
+        responsive: true,
+        backgroundColor: '#f8f4f0',
+        scales: { 
+          y: { 
+            beginAtZero: true, 
+            max: 100,
+            title: { display: true, text: 'Acurácia (%)', font: { size: 20, weight: 'bold', color: '#000000' } }, 
+            ticks: { font: { size: 16, color: '#000000' } },
+            grid: { color: 'rgba(0, 0, 0, 0.3)' }
+          }, 
+          x: { 
+            ticks: { font: { size: 16, color: '#000000' } },
+            grid: { color: 'rgba(0, 0, 0, 0.3)' }
+          } 
+        },
+        plugins: { legend: { display: false, labels: { font: { size: 18, color: '#000000' } } } }
+      }
+    });
+
+    // Scatter Tempo vs Acurácia por categoria (escala logarítmica no tempo)
+    const scatterCtx = document.getElementById('scatterChart').getContext('2d');
+    new Chart(scatterCtx, {
+      type: 'scatter',
+      data: { datasets: [ {label: 'CNN', data: [{x: 160.86, y: 83.05}], backgroundColor: 'rgba(231, 76, 60, 0.95)', pointRadius: 18, pointBorderColor: '#ffffff', pointBorderWidth: 2}, {label: 'VGG16', data: [{x: 113.37, y: 62.59}, {x: 226.74, y: 83.13}], backgroundColor: 'rgba(192, 57, 43, 0.95)', pointRadius: 18, pointBorderColor: '#ffffff', pointBorderWidth: 2}, {label: 'VGG16 HDC Hibrido', data: [{x: 5.47, y: 40.39}, {x: 5.25, y: 74.67}, {x: 5.25, y: 40.79}, {x: 5.23, y: 63.94}, {x: 4.67, y: 65.21}], backgroundColor: 'rgba(39, 174, 96, 0.95)', pointRadius: 18, pointBorderColor: '#ffffff', pointBorderWidth: 2}, {label: 'HDC', data: [{x: 27.38, y: 59.61}, {x: 27.27, y: 59.61}, {x: 27.46, y: 59.61}, {x: 3.14, y: 59.44}, {x: 12.68, y: 60.11}], backgroundColor: 'rgba(241, 196, 15, 0.95)', pointRadius: 18, pointBorderColor: '#ffffff', pointBorderWidth: 2} ] },
+      options: {
+        responsive: true,
+        backgroundColor: '#f8f4f0',
+        scales: {
+          x: {
+            type: 'logarithmic',
+            title: { display: true, text: 'Tempo de Treinamento (min) [log]', font: { size: 20, weight: 'bold', color: '#000000' } },
+            ticks: { callback: (v) => v, min: 1, font: { size: 18, color: '#000000', weight: 'bold' } },
+            grid: { color: 'rgba(0, 0, 0, 0.3)' }
+          },
+          y: { 
+            title: { display: true, text: 'Acurácia (%)', font: { size: 20, weight: 'bold', color: '#000000' } }, 
+            ticks: { font: { size: 18, color: '#000000', weight: 'bold' } },
+            grid: { color: 'rgba(0, 0, 0, 0.3)' }
+          }
+        },
+        plugins: { legend: { display: true, position: 'top', labels: { font: { size: 18, weight: 'bold', color: '#000000' } } } }
+      }
+    });
+
+    // Scatter com zoom linear (0–30 min)
+    const scatterZoomCtx = document.getElementById('scatterChartZoom').getContext('2d');
+    new Chart(scatterZoomCtx, {
+      type: 'scatter',
+      data: { datasets: [ {label: 'CNN', data: [{x: 160.86, y: 83.05}], backgroundColor: 'rgba(231, 76, 60, 0.95)', pointRadius: 18, pointBorderColor: '#ffffff', pointBorderWidth: 2}, {label: 'VGG16', data: [{x: 113.37, y: 62.59}, {x: 226.74, y: 83.13}], backgroundColor: 'rgba(192, 57, 43, 0.95)', pointRadius: 18, pointBorderColor: '#ffffff', pointBorderWidth: 2}, {label: 'VGG16 HDC Hibrido', data: [{x: 5.47, y: 40.39}, {x: 5.25, y: 74.67}, {x: 5.25, y: 40.79}, {x: 5.23, y: 63.94}, {x: 4.67, y: 65.21}], backgroundColor: 'rgba(39, 174, 96, 0.95)', pointRadius: 18, pointBorderColor: '#ffffff', pointBorderWidth: 2}, {label: 'HDC', data: [{x: 27.38, y: 59.61}, {x: 27.27, y: 59.61}, {x: 27.46, y: 59.61}, {x: 3.14, y: 59.44}, {x: 12.68, y: 60.11}], backgroundColor: 'rgba(241, 196, 15, 0.95)', pointRadius: 18, pointBorderColor: '#ffffff', pointBorderWidth: 2} ] },
+      options: {
+        responsive: true,
+        backgroundColor: '#f8f4f0',
+        scales: {
+          x: {
+            type: 'linear',
+            min: 0,
+            max: 30,
+            title: { display: true, text: 'Tempo de Treinamento (min)', font: { size: 20, weight: 'bold', color: '#000000' } },
+            ticks: { font: { size: 18, color: '#000000', weight: 'bold' } },
+            grid: { color: 'rgba(0, 0, 0, 0.3)' }
+          },
+          y: { 
+            title: { display: true, text: 'Acurácia (%)', font: { size: 20, weight: 'bold', color: '#000000' } }, 
+            ticks: { font: { size: 18, color: '#000000', weight: 'bold' } },
+            grid: { color: 'rgba(0, 0, 0, 0.3)' }
+          }
+        },
+        plugins: { legend: { display: true, position: 'top', labels: { font: { size: 18, weight: 'bold', color: '#000000' } } } }
+      }
+    });
+  </script>
+</body>
+</html>

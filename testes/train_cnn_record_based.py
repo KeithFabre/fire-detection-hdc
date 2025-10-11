@@ -1,4 +1,4 @@
-# Modified for VGG16 feature extraction + Record-based HDC classification with comprehensive metrics
+# Modified for Custom CNN feature extraction + Record-based HDC classification with comprehensive metrics
 
 import torch
 import torch.nn as nn
@@ -7,9 +7,11 @@ import torch.optim as optim
 import os
 from tqdm import tqdm
 import time
-import torchvision.models as models
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader, random_split, Subset
+
+# Import custom CNN model
+from model_cnn import FireDetectionModel
 
 # Import for HDC
 import torchhd
@@ -20,7 +22,6 @@ from torchhd.models import Centroid
 import psutil
 import json
 from datetime import datetime
-from sklearn.metrics import classification_report, confusion_matrix
 
 # Try to import codecarbon
 try:
@@ -31,9 +32,9 @@ except ImportError:
     CODECARBON_AVAILABLE = False
     print("CodeCarbon not available - install with: pip install codecarbon")
 
-# vgg16 expects 224x224 images
-IMG_WIDTH = 224
-IMG_HEIGHT = 224
+# Custom CNN expects 256x256 images
+IMG_WIDTH = 256
+IMG_HEIGHT = 256
 BATCH_SIZE = 32
 
 # HDC parameters
@@ -110,8 +111,8 @@ def get_memory_usage():
     process = psutil.Process()
     memory_info = process.memory_info()
     return {
-        'rss_mb': memory_info.rss / 1024**2,  # Resident Set Size
-        'vms_mb': memory_info.vms / 1024**2,   # Virtual Memory Size
+        'rss_mb': memory_info.rss / 1024**2,
+        'vms_mb': memory_info.vms / 1024**2,
         'percent': psutil.virtual_memory().percent
     }
 
@@ -166,12 +167,29 @@ def stop_carbon_tracker(tracker, available):
 
 def extract_features(model, x):
     """
-    Extract features from VGG16 up to the last convolutional layer.
+    Extract features from custom CNN before the final classifier.
+    We'll extract features after final_conv, before the classifier.
     """
     with torch.no_grad():
-        x = model.features(x)
+        # Pass through the initial feature extractor
+        previous_block_activation = model.features(x)
+        
+        # Pass through the residual block
+        x = model.residual_block(previous_block_activation)
+        
+        # Get the projected residual
+        residual = model.residual_projection(previous_block_activation)
+        
+        # Add the residual connection
+        x = x + residual
+        
+        # Pass through the final conv layers
+        x = model.final_conv(x)
+        
+        # Global average pooling and flatten (like in the classifier but without dropout and linear)
         x = F.adaptive_avg_pool2d(x, (1, 1))
         features = torch.flatten(x, 1)
+    
     return features
 
 # Configuration
@@ -188,11 +206,10 @@ if cuda_available:
     print(f"GPU: {torch.cuda.get_device_name()}")
     print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
 
-# VGG16 preprocessing
+# Custom CNN preprocessing - same as the original model
 data_transforms = transforms.Compose([
     transforms.Resize((IMG_HEIGHT, IMG_WIDTH)),
     transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
 
 # Load the entire dataset using ImageFolder
@@ -204,14 +221,14 @@ test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False)
 
 print(f"Classes: {class_names}")
 
-# Load pre-trained VGG16
-vgg16 = models.vgg16(pretrained=True).to(device)
-vgg16.eval()
+# Load custom CNN model (without loading pretrained weights)
+custom_cnn = FireDetectionModel().to(device)
+custom_cnn.eval()
 
 # Get min and max values for encoding by processing a subset
 print("Calculating feature range...")
 sample_features = []
-sample_size = min(100, len(train_loader.dataset))  # Use 100 samples or all if less
+sample_size = min(100, len(train_loader.dataset))
 
 # Create a subset of the training data for range calculation
 subset_indices = torch.randperm(len(train_loader.dataset))[:sample_size]
@@ -220,7 +237,7 @@ subset_loader = DataLoader(subset_dataset, batch_size=BATCH_SIZE, shuffle=False)
 
 for images, _ in tqdm(subset_loader, desc="Sampling features"):
     images = images.to(device)
-    features = extract_features(vgg16, images)
+    features = extract_features(custom_cnn, images)
     sample_features.append(features.cpu())
 
 sample_features = torch.cat(sample_features, dim=0)
@@ -230,6 +247,7 @@ print(f"Feature min: {min_val}, max: {max_val}")
 
 # Get feature size
 feature_size = sample_features.shape[1]
+print(f"Feature size: {feature_size}")
 
 # Initialize results array for all runs
 all_results = []
@@ -298,7 +316,7 @@ for run_num in range(1, NUM_RUNS + 1):
             'feature_size': feature_size,
             'num_levels': NUM_LEVELS,
             'num_classes': NUM_CLASSES,
-            'model_type': 'VGG16_RecordBased'
+            'model_type': 'CustomCNN_RecordBased'
         }
     }
     
@@ -346,7 +364,7 @@ for run_num in range(1, NUM_RUNS + 1):
         
         # Extract features
         with torch.no_grad():
-            features = extract_features(vgg16, images)
+            features = extract_features(custom_cnn, images)
         
         # Encode features to hypervectors
         encoded_features = record_encode(features)
@@ -420,7 +438,7 @@ for run_num in range(1, NUM_RUNS + 1):
             peak_ram_usage_test = max(peak_ram_usage_test, current_ram['rss_mb'])
             
             # Extract features
-            features = extract_features(vgg16, images)
+            features = extract_features(custom_cnn, images)
             
             # Encode features to hypervectors
             encoded_features = record_encode(features)
@@ -456,16 +474,6 @@ for run_num in range(1, NUM_RUNS + 1):
     
     # Stop carbon tracking for testing
     testing_emissions = stop_carbon_tracker(testing_tracker, testing_carbon_available)
-    
-    # Compute classification metrics for this run
-    run_classification_report = classification_report(all_labels, all_predictions, target_names=class_names, output_dict=True)
-    run_confusion_matrix = confusion_matrix(all_labels, all_predictions).tolist()
-    
-    # Add classification metrics to run_metrics
-    run_metrics['classification_metrics'] = {
-        'classification_report': run_classification_report,
-        'confusion_matrix': run_confusion_matrix
-    }
     
     # Calculate totals for this run
     total_training_energy = training_cpu_energy + training_gpu_energy
@@ -530,7 +538,7 @@ print(f"RAM Peak (Training) - Mean: {sum(ram_peaks_training)/len(ram_peaks_train
 print(f"RAM Peak (Testing) - Mean: {sum(ram_peaks_testing)/len(ram_peaks_testing):.1f} MB")
 
 # Save all results to JSON file
-output_file = f'vgg16_record_based_metrics_{NUM_RUNS}_runs_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json'
+output_file = f'custom_cnn_record_based_metrics_{NUM_RUNS}_runs_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json'
 final_output = {
     'experiment_info': {
         'total_runs': NUM_RUNS,
@@ -542,7 +550,7 @@ final_output = {
             'feature_size': feature_size,
             'num_levels': NUM_LEVELS,
             'num_classes': NUM_CLASSES,
-            'model_type': 'VGG16_RecordBased'
+            'model_type': 'CustomCNN_RecordBased'
         }
     },
     'summary_statistics': {

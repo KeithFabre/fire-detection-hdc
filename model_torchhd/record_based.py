@@ -37,7 +37,7 @@ if cuda_available:
 # =============================================================================
 # CONFIGURATION - Modify these parameters
 # =============================================================================
-NUM_RUNS = 1  
+NUM_RUNS = 3 
 DIMENSIONS = 1000
 IMG_SIZE = 256
 NUM_LEVELS = 100
